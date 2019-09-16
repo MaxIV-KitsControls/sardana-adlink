@@ -13,8 +13,8 @@ from sardana.tango.core.util import from_tango_state_to_state
 
 class ListenerDataReady(object):
 
-    def __init__(self, queue, log=None):
-        self.queue = queue
+    def __init__(self, queue_obj, log=None):
+        self.queue = queue_obj
         self.log = log
 
     def push_event(self, event):
