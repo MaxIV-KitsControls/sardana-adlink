@@ -278,7 +278,7 @@ class AdlinkAICoTiCtrl(CounterTimerController):
                 self._new_data = False
                 return
 
-            for axis in list(self.dataBuff.keys()):
+            for axis in self.dataBuff.keys():
                 if axis == 1:
                     self.dataBuff[axis] = [self.intTime]
                 else:
@@ -318,7 +318,7 @@ class AdlinkAICoTiCtrl(CounterTimerController):
             self._log.debug('ReadAll HW Synch: reading indexes [%r, %r]',
                             self._last_index_read, new_index)
 
-            for axis in list(self.dataBuff.keys()):
+            for axis in self.dataBuff.keys():
                 if axis == 1:
                     new_datas = (new_index - self._last_index_read) + 1
                     if new_index == 0:
