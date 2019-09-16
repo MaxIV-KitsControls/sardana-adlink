@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 import PyTango
-import queue
+import Queue
 import time
 
 from sardana import State, DataAccess
@@ -120,7 +120,7 @@ class AdlinkAICoTiCtrl(CounterTimerController):
         self._apply_formulas = {}
         self._master_channel = None
         self._id_callback = None
-        self._index_queue = queue.Queue()
+        self._index_queue = Queue.Queue()
         self._last_index_read = -1
         self._hw_state = None
         self._new_data = False
@@ -278,7 +278,7 @@ class AdlinkAICoTiCtrl(CounterTimerController):
                 self._new_data = False
                 return
 
-            for axis in list(self.dataBuff.keys()):
+            for axis in self.dataBuff.keys():
                 if axis == 1:
                     self.dataBuff[axis] = [self.intTime]
                 else:
@@ -308,7 +308,7 @@ class AdlinkAICoTiCtrl(CounterTimerController):
                         if data_ready_index > new_index:
                             new_index = data_ready_index
                 except Exception as e:
-                    print(e)
+                    print e
 
             if new_index == self._last_index_read:
                 self._new_data = False
@@ -318,7 +318,7 @@ class AdlinkAICoTiCtrl(CounterTimerController):
             self._log.debug('ReadAll HW Synch: reading indexes [%r, %r]',
                             self._last_index_read, new_index)
 
-            for axis in list(self.dataBuff.keys()):
+            for axis in self.dataBuff.keys():
                 if axis == 1:
                     new_datas = (new_index - self._last_index_read) + 1
                     if new_index == 0:
