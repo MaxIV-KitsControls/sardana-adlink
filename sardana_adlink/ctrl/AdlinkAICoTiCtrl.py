@@ -203,7 +203,7 @@ class AdlinkAICoTiCtrl(CounterTimerController):
     def StateOne(self, axis):
         return self._state, self._status
 
-    def LoadOne(self, axis, value, repetitions):
+    def LoadOne(self, axis, value, repetitions, latency):
         self._stop_device()
         self._clean_acquisition()
 
