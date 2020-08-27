@@ -61,7 +61,7 @@ class AdlinkAICoTiCtrl(CounterTimerController):
 
     MaxDevice = 5
 
-    class_prop = {'AdlinkAIDeviceName': {Description: 'AdlinkAI Tango device',
+    ctrl_properties = {'AdlinkAIDeviceName': {Description: 'AdlinkAI Tango device',
                                          Type: str},
                   'SampleRate': {Description: 'SampleRate set for AIDevice',
                                  Type: int},
@@ -232,15 +232,21 @@ class AdlinkAICoTiCtrl(CounterTimerController):
         self.AIDevice["NumOfTriggers"] = self._repetitions
         self.AIDevice['ChannelSamplesPerTrigger'] = chn_samp_per_trigger
 
+    def PreStartAll(self):
+        pass
+
     def PreStartOne(self, axis, value=None):
         if axis != 1:
             self._master_channel = axis
         return True
+    
+    def StartOne(self, axis, value=None):
+        pass
 
-    def StartAllCT(self):
+    def StartAll(self):
         """
         Starting the acquisition is done only if before was called
-        PreStartOneCT for master channel.
+        PreStartOne for master channel.
         """
 
         if self._synchronization == AcqSynch.HardwareTrigger:
@@ -256,14 +262,14 @@ class AdlinkAICoTiCtrl(CounterTimerController):
         # For these reasons we either wait or retry 3 times the Start command.
         self.AIDevice.set_timeout_millis(15000)
         for i in range(1, 4):
-            self._log.debug('StartAllCT: Try to start AIDevice: times ...%r'
+            self._log.debug('StartAll: Try to start AIDevice: times ...%r'
                             % i)
             self.AIDevice.start()
             time.sleep(self._start_wait_time)
             self.StateAll()
             if self._hw_state == tango.DevState.RUNNING:
                 break
-            self._log.debug('StartAllCT: stopping AIDevice')
+            self._log.debug('StartAll: stopping AIDevice')
             self._stop_device()
         self.AIDevice.set_timeout_millis(3000)
 
