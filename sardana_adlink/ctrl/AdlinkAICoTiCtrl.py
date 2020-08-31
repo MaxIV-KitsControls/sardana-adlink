@@ -232,17 +232,11 @@ class AdlinkAICoTiCtrl(CounterTimerController):
         self.AIDevice["NumOfTriggers"] = self._repetitions
         self.AIDevice['ChannelSamplesPerTrigger'] = chn_samp_per_trigger
 
-    def PreStartAll(self):
-        pass
-
     def PreStartOne(self, axis, value=None):
         if axis != 1:
             self._master_channel = axis
         return True
     
-    def StartOne(self, axis, value=None):
-        pass
-
     def StartAll(self):
         """
         Starting the acquisition is done only if before was called
