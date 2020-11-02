@@ -97,7 +97,7 @@ class AdlinkAIOneDCtrl(OneDController):
                                 DefaultValue: 'true'}}
 
     ctrl_attributes = {
-        'PointsPerTrigger': {
+        'PointsPerStep': {
             Type: int,
             Description: "Points to generate or Triggers to expect per step. \
                           Only applicable for the step scan. \
@@ -162,7 +162,7 @@ class AdlinkAIOneDCtrl(OneDController):
         self._latency_time = 1e-6  # 1 us
         self._start_wait_time = 0.05
         self._skip_start = self.SkipStart.lower() == 'true'
-        self._pointspertrigger = 1
+        self._pointsperstep = 1
 
     @debug_it
     @handle_error(msg="_unsubcribe_data_ready: Unable to unsubscribe!")
@@ -260,8 +260,8 @@ class AdlinkAIOneDCtrl(OneDController):
             source = "SOFT"
         elif self._synchronization == AcqSynch.HardwareTrigger:
             source = "ExtD:+"
-            if self._pointspertrigger > 1:
-                self._repetitions = self._pointspertrigger
+            if self._pointsperstep > 1:
+                self._repetitions = self._pointsperstep
         else:
             raise ValueError("Adlink daq2005 allows only Software or "
                              "Hardware triggering")
@@ -432,9 +432,9 @@ class AdlinkAIOneDCtrl(OneDController):
     def GetPar(self, name):
         name = name.lower()
         if name == "pointspertrigger":
-            return self._pointspertrigger
+            return self._pointsperstep
 
     def SetPar(self, name, value):
         name = name.lower()
         if name == "pointspertrigger":
-            self._pointspertrigger = value
+            self._pointsperstep = value
