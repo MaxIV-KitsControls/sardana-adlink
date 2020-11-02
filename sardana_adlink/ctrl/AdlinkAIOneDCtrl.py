@@ -221,15 +221,6 @@ class AdlinkAIOneDCtrl(OneDController):
             self._status = 'The Adlink is acquiring hehe'
 
         elif self._hw_state == tango.DevState.ON:
-            # Verify if we read all the channels data:
-            if self._last_index_read != (self._repetitions-1) and \
-                    self._synchronization == AcqSynch.HardwareTrigger:
-                self._log.warning('The Adlink finished but the ctrl did not '
-                                  'read all the data yet. Last index readed %r'
-                                  % self._last_index_read)
-                self._state = State.Moving
-                self._status = 'The Adlink is acquiring'
-            # else:
             self._state = State.On
             self._status = 'The Adlink is ready to acquire'
         else:
