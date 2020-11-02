@@ -339,7 +339,7 @@ class AdlinkAIOneDCtrl(OneDController):
 
                 # Read last index received by the data ready event
                 try:
-                    while self._index_queue.get() >= self._iterations:
+                    while self._index_queue.get() >= self._repetitions:
                         data_ready_index = self._index_queue.get()
                         if data_ready_index > new_index:
                             new_index = data_ready_index
