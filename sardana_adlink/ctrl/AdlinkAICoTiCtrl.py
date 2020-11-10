@@ -271,6 +271,9 @@ class AdlinkAICoTiCtrl(CounterTimerController):
             if not self._skip_start:
                 raise Exception('Could not start acquisition')
 
+    def StartOne(self, axis, value=None):	
+        pass
+
     def ReadAll(self):
         self._new_data = True
         if self._synchronization == AcqSynch.SoftwareTrigger:
