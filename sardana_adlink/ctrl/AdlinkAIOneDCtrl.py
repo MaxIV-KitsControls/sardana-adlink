@@ -163,6 +163,7 @@ class AdlinkAIOneDCtrl(OneDController):
         self._start_wait_time = 0.05
         self._skip_start = self.SkipStart.lower() == 'true'
         self._pointsperstep = 1
+        self._is_aborted = False
 
     @debug_it
     @handle_error(msg="_unsubcribe_data_ready: Unable to unsubscribe!")
@@ -213,19 +214,23 @@ class AdlinkAIOneDCtrl(OneDController):
         self._unsubcribe_data_ready()
 
     @debug_it
+    def PrepareOne(self, axis, value, repetitions, latency, nb_starts):
+        self._is_aborted = False
+
+    @debug_it
     @handle_error(msg="StateAll: Unable to read state from the device!")
     def StateAll(self):
         self._hw_state = self.AIDevice.state()
         if self._hw_state == tango.DevState.RUNNING:
             self._state = State.Moving
-            self._status = 'The Adlink is acquiring hehe'
+            self._status = 'The Adlink is acquiring'
 
         elif self._hw_state == tango.DevState.ON:
             self._state = State.On
             self._status = 'The Adlink is ready to acquire'
         else:
             self._state = from_tango_state_to_state(self._hw_state)
-            self._status = 'The Adlink state is haha: %s' % self._hw_state
+            self._status = 'The Adlink state is: %s' % self._hw_state
 
     @debug_it
     def StateOne(self, axis):
@@ -305,12 +310,14 @@ class AdlinkAIOneDCtrl(OneDController):
                 raise Exception('Could not start acquisition')
     
     @debug_it
-    def StartOne(self, axis, value=None):	
+    def StartOne(self, axis, value=None):
         pass
 
     @debug_it
     @handle_error(msg="ReadAll: Could not read from the device!")
     def ReadAll(self):
+        if self._is_aborted:
+            return
         self._new_data = True
         if self._synchronization == AcqSynch.SoftwareTrigger:
             if self._hw_state != tango.DevState.ON:
@@ -331,6 +338,9 @@ class AdlinkAIOneDCtrl(OneDController):
                     self.dataBuff[axis] = [mean]
 
         elif self._synchronization == AcqSynch.HardwareTrigger:
+            if self._hw_state != tango.DevState.ON:
+                self._new_data = False
+                return
             new_index = self._last_index_read
             if self._hw_state == tango.DevState.ON:
                 self._log.debug('ReadAll HW Synch: Adlinkg State ON')
@@ -396,6 +406,7 @@ class AdlinkAIOneDCtrl(OneDController):
         if self._hw_state != tango.DevState.STANDBY:
             self.AIDevice.stop()
         self._clean_acquisition()
+        self._is_aborted = True
 
     def GetAxisExtraPar(self, axis, name):
         name = name.lower()
