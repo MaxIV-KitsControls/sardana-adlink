@@ -2,14 +2,40 @@
 import tango
 import queue
 import time
+import datetime
 
 from sardana import State, DataAccess
 from sardana.pool import AcqSynch
-from sardana.pool.controller import CounterTimerController, Type, Access, \
-    Description, DefaultValue
+from sardana.pool.controller import OneDController, Type, Access, \
+    Description, DefaultValue, Memorize, Memorized, NotMemorized
 from sardana.sardanavalue import SardanaValue
 from sardana.tango.core.util import from_tango_state_to_state
+from functools import wraps, partial
+import six
 
+def debug_it(func):
+    @wraps(func)
+    def wrapper(self, *args, **kwargs):
+
+        self._log.debug("Entering {} with args={}, kwargs={}".format(
+            func.__name__, args, kwargs))
+        output = func(self, *args, **kwargs)
+        self._log.debug("Leaving without error {} with output {}".format(func.__name__, output))
+        return output
+    return wrapper
+
+
+def handle_error(func=None, msg="Error with DelayGeneratorCtrl"):
+    if func is None:
+        return partial(handle_error, msg=msg)
+    else:
+        @wraps(func)
+        def wrapper(self, *args, **kwargs):
+            try:
+                return func(self, *args, **kwargs)
+            except Exception as e:
+                six.raise_from(RuntimeError(msg), e)
+        return wrapper
 
 class ListenerDataReady(object):
 
@@ -33,7 +59,7 @@ class ListenerDataReady(object):
             # raise Exception('ListenerDataReady event with error')
 
 
-class AdlinkAICoTiCtrl(CounterTimerController):
+class AdlinkAIOneDCtrl(OneDController):
     """
     This class is the Sardana CounterTimer controller for the Adlink adc
     based counters.
@@ -70,6 +96,17 @@ class AdlinkAICoTiCtrl(CounterTimerController):
                                 Type: str,
                                 DefaultValue: 'true'}}
 
+    ctrl_attributes = {
+        'PointsPerStep': {
+            Type: int,
+            Description: "Points to generate or Triggers to expect per step. \
+                          Only applicable for the step scan. \
+                          For multiple points per step.",
+            Access: DataAccess.ReadWrite,
+            Memorize: Memorized
+        },
+    }
+
     axis_attributes = {"SD":
                        {Type: float,
                         Description: 'Standard deviation',
@@ -89,26 +126,20 @@ class AdlinkAICoTiCtrl(CounterTimerController):
                         },
                        }
 
+    @handle_error(msg="__init__: Unable to init!")
     def __init__(self, inst, props, *args, **kwargs):
         #        self._log.setLevel(logging.DEBUG)
-        CounterTimerController.__init__(self, inst, props, *args, **kwargs)
+        OneDController.__init__(self, inst, props, *args, **kwargs)
         self._log.debug("__init__(%s, %s): Entering...", repr(inst),
                         repr(props))
 
-        try:
-            self.AIDevice = tango.DeviceProxy(self.AdlinkAIDeviceName)
-            cmdlist = [c.cmd_name for c in self.AIDevice.command_list_query()]
-            if 'ClearBuffer' not in cmdlist:
-                msg = ("__init__(): Looks like ADlink device server "
-                       "version is too old for this controller version. "
-                       "Please upgrade Device server\n")
-                raise RuntimeError(msg)
-
-        except tango.DevFailed as e:
-            self._log.error("__init__(): Could not create a device proxy from "
-                            "following device name: %s.\nException: %s",
-                            self.AdlinkAIDeviceName, e)
-            raise
+        self.AIDevice = tango.DeviceProxy(self.AdlinkAIDeviceName)
+        cmdlist = [c.cmd_name for c in self.AIDevice.command_list_query()]
+        if 'ClearBuffer' not in cmdlist:
+            msg = ("__init__(): Looks like ADlink device server "
+                    "version is too old for this controller version. "
+                    "Please upgrade Device server\n")
+            raise RuntimeError(msg)
 
         # TODO: Change the names of the variables to _name_without_capital_case
         self.sd = {}
@@ -131,12 +162,18 @@ class AdlinkAICoTiCtrl(CounterTimerController):
         self._latency_time = 1e-6  # 1 us
         self._start_wait_time = 0.05
         self._skip_start = self.SkipStart.lower() == 'true'
+        self._pointsperstep = 1
+        self._is_aborted = False
 
+    @debug_it
+    @handle_error(msg="_unsubcribe_data_ready: Unable to unsubscribe!")
     def _unsubcribe_data_ready(self):
         if self._id_callback is not None:
             self.AIDevice.unsubscribe_event(self._id_callback)
             self._id_callback = None
 
+    @debug_it
+    @handle_error(msg="_clean_acquisition: Unable to clear buffer!")
     def _clean_acquisition(self):
         self._last_index_read = -1
         self._repetitions = 0
@@ -146,23 +183,20 @@ class AdlinkAICoTiCtrl(CounterTimerController):
         self._new_data = False
         self.AIDevice.ClearBuffer()
 
+    @debug_it
+    @handle_error(msg="_stop_device: Unable to stop the device!")
     def _stop_device(self):
-        try:
-            self.StateAll()
-            if self._hw_state != tango.DevState.STANDBY:
-                # Randomly device may take more than 3 seconds to stop.
-                # The probability raises when acquisitions are done frequently
-                # step scan, frequent executions of ct, etc.
-                # Temporarily set a higher timeout.
-                self.AIDevice.set_timeout_millis(10000)
-                self.AIDevice.stop()
-                self.AIDevice.set_timeout_millis(3000)
-        except tango.DevFailed as e:
-            msg = 'Can not stop the Device: %s. Exception %r' % \
-                   (self.AdlinkAIDeviceName, e)
-            self._log.error(msg)
-            raise RuntimeError(msg)
+        self.StateAll()
+        if self._hw_state != tango.DevState.STANDBY:
+            # Randomly device may take more than 3 seconds to stop.
+            # The probability raises when acquisitions are done frequently
+            # step scan, frequent executions of ct, etc.
+            # Temporarily set a higher timeout.
+            self.AIDevice.set_timeout_millis(10000)
+            self.AIDevice.stop()
+            self.AIDevice.set_timeout_millis(3000)
 
+    @debug_it
     def AddDevice(self, axis):
         self.sd[axis] = 0
         self.formulas[axis] = 'value'
@@ -171,6 +205,7 @@ class AdlinkAICoTiCtrl(CounterTimerController):
         # buffer for the continuous scan
         self.dataBuff[axis] = []
 
+    @debug_it
     def DeleteDevice(self, axis):
         self.sd.pop(axis)
         self.formulas.pop(axis)
@@ -178,6 +213,12 @@ class AdlinkAICoTiCtrl(CounterTimerController):
         self.dataBuff.pop(axis)
         self._unsubcribe_data_ready()
 
+    @debug_it
+    def PrepareOne(self, axis, value, repetitions, latency, nb_starts):
+        self._is_aborted = False
+
+    @debug_it
+    @handle_error(msg="StateAll: Unable to read state from the device!")
     def StateAll(self):
         self._hw_state = self.AIDevice.state()
         if self._hw_state == tango.DevState.RUNNING:
@@ -185,24 +226,18 @@ class AdlinkAICoTiCtrl(CounterTimerController):
             self._status = 'The Adlink is acquiring'
 
         elif self._hw_state == tango.DevState.ON:
-            # Verify if we read all the channels data:
-            if self._last_index_read != (self._repetitions-1) and \
-                    self._synchronization == AcqSynch.HardwareTrigger:
-                self._log.warning('The Adlink finished but the ctrl did not '
-                                  'read all the data yet. Last index readed %r'
-                                  % self._last_index_read)
-                self._state = State.Moving
-                self._status = 'The Adlink is acquiring'
-            else:
-                self._state = State.On
-                self._status = 'The Adlink is ready to acquire'
+            self._state = State.On
+            self._status = 'The Adlink is ready to acquire'
         else:
             self._state = from_tango_state_to_state(self._hw_state)
             self._status = 'The Adlink state is: %s' % self._hw_state
 
+    @debug_it
     def StateOne(self, axis):
         return self._state, self._status
 
+    @debug_it
+    @handle_error(msg="StateAll: Unable to configure the device!")
     def LoadOne(self, axis, value, repetitions, latency):
         self._stop_device()
         self._clean_acquisition()
@@ -219,10 +254,10 @@ class AdlinkAICoTiCtrl(CounterTimerController):
                       'software synchronization' % self._start_wait_time
                 raise ValueError(msg)
             source = "SOFT"
-            # TODO: To fix Sardana bug #594
-            self._repetitions = 1
         elif self._synchronization == AcqSynch.HardwareTrigger:
             source = "ExtD:+"
+            if self._pointsperstep > 1:
+                self._repetitions = self._pointsperstep
         else:
             raise ValueError("Adlink daq2005 allows only Software or "
                              "Hardware triggering")
@@ -232,11 +267,14 @@ class AdlinkAICoTiCtrl(CounterTimerController):
         self.AIDevice["NumOfTriggers"] = self._repetitions
         self.AIDevice['ChannelSamplesPerTrigger'] = chn_samp_per_trigger
 
+    @debug_it
     def PreStartOne(self, axis, value=None):
         if axis != 1:
             self._master_channel = axis
         return True
     
+    @debug_it
+    @handle_error(msg="StartAll: Unable to start acquisition on the device!")
     def StartAll(self):
         """
         Starting the acquisition is done only if before was called
@@ -270,11 +308,16 @@ class AdlinkAICoTiCtrl(CounterTimerController):
         if self._hw_state != tango.DevState.RUNNING:
             if not self._skip_start:
                 raise Exception('Could not start acquisition')
-
-    def StartOne(self, axis, value=None):	
+    
+    @debug_it
+    def StartOne(self, axis, value=None):
         pass
 
+    @debug_it
+    @handle_error(msg="ReadAll: Could not read from the device!")
     def ReadAll(self):
+        if self._is_aborted:
+            return
         self._new_data = True
         if self._synchronization == AcqSynch.SoftwareTrigger:
             if self._hw_state != tango.DevState.ON:
@@ -295,18 +338,18 @@ class AdlinkAICoTiCtrl(CounterTimerController):
                     self.dataBuff[axis] = [mean]
 
         elif self._synchronization == AcqSynch.HardwareTrigger:
-            # flg_warning = False
+            if self._hw_state != tango.DevState.ON:
+                self._new_data = False
+                return
             new_index = self._last_index_read
             if self._hw_state == tango.DevState.ON:
                 self._log.debug('ReadAll HW Synch: Adlinkg State ON')
                 new_index = self._repetitions-1
-                # if self._last_index_read != (self._repetitions-1):
-                #     flg_warning = True
             else:
 
                 # Read last index received by the data ready event
                 try:
-                    while not self._index_queue.empty():
+                    while self._index_queue.get() >= self._repetitions:
                         data_ready_index = self._index_queue.get()
                         if data_ready_index > new_index:
                             new_index = data_ready_index
@@ -340,35 +383,30 @@ class AdlinkAICoTiCtrl(CounterTimerController):
 
             self._last_index_read = new_index
 
-            # TODO implement the warning flag msg
-            # if flg_warning:
-            #      current_values = (self._repetitions-1) - \
-            #                        self._last_index_read
-            #      chunck_value = self.AIDevice['chuck'].value
-            #      if (current_values/chunck_value > 1):
-            #          msg = "WARNING: Lost DataReady Events"
-            #          self._log.warning(msg)
-
+    @debug_it
     def ReadOne(self, axis):
         if self._synchronization == AcqSynch.SoftwareTrigger:
             if not self._new_data:
                 raise Exception("Acquisition did not finish correctly. Adlink "
                                 "State %r" % self._hw_state)
-            return SardanaValue(self.dataBuff[axis][0])
+            return [self.dataBuff[axis][0]]
 
         elif self._synchronization == AcqSynch.HardwareTrigger:
             if not self._new_data:
                 return []
             else:
-                return self.dataBuff[axis]
+                return [self.dataBuff[axis]]
         else:
             raise Exception("Unknown synchronization mode.")
 
+    @debug_it
+    @handle_error(msg="ReadAll: Could not stop the device!")
     def AbortOne(self, axis):
         self.StateAll()
         if self._hw_state != tango.DevState.STANDBY:
             self.AIDevice.stop()
         self._clean_acquisition()
+        self._is_aborted = True
 
     def GetAxisExtraPar(self, axis, name):
         name = name.lower()
@@ -392,3 +430,13 @@ class AdlinkAICoTiCtrl(CounterTimerController):
             if value:
                 for i in self.formulas:
                     self.formulas[i] = self.formulas[axis]
+
+    def GetPar(self, name):
+        name = name.lower()
+        if name == "pointspertrigger":
+            return self._pointsperstep
+
+    def SetPar(self, name, value):
+        name = name.lower()
+        if name == "pointspertrigger":
+            self._pointsperstep = value
